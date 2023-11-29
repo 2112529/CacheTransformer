@@ -12,7 +12,9 @@ def preprocess_data(memory_access_trace, sequence_length):
 
 # Example usage
 sequence_length = 30  # As mentioned in the paper
-memory_access_trace = [...]  # Your memory access trace data
+memory_access_trace_path = "data/aster_163B.trace.xz"  # Your memory access trace data
+f=open(memory_access_trace_path, 'rb')
+memory_access_trace = np.load(f)
 processed_data = preprocess_data(memory_access_trace, sequence_length)
 
 
