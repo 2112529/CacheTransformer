@@ -37,10 +37,15 @@ class PositionalEncoding(nn.Module):
         self.register_buffer('pe', pe)
 
     def forward(self, x):
-        ''' x: [batch_size, seq_len, d_model] '''
-        # 5000是我们预定义的最大的seq_len，就是说我们把最多的情况pe都算好了，用的时候用多少就取多少
-        x = x + self.pe[:, :x.size(1), :] # 加的时候应该也广播了，第一维 1 -> batch_size
-        return self.dropout(x) # return: [batch_size, seq_len, d_model], 和输入的形状相同
+        # def forward(self, x, control_flow_info=None):
+        # 原有的位置编码逻辑
+        x = x + self.pe[:, :x.size(1), :]
+
+        if control_flow_info is not None:
+            # 将控制流信息融合到位置编码中
+            x = x + control_flow_info  # 假设 control_flow_info 与 x 形状相同
+
+        return self.dropout(x)
 
 
 
@@ -136,11 +141,6 @@ class MultiHeadAttention(nn.Module):
         output = self.concat(context)  # [batch_size, len_q, d_model]
         return nn.LayerNorm(d_model).cuda()(output + residual)  # output: [batch_size, len_q, d_model]
 
-        '''        
-        最后的concat部分，网上的大部分实现都采用的是下面这种方式（也是哈佛NLP团队的写法），但是我发现下面这种方式拼回去会使原来的位置乱序，于是并未采用这种写法，实验效果是相近的
-        context = context.transpose(1, 2).reshape(batch_size, -1, d_model)
-        output = self.linear(context)
-        '''
 
 
 # 这部分代码很简单，对应模型图中的 Feed Forward和 Add & Norm
@@ -176,6 +176,35 @@ class EncoderLayer(nn.Module):
         enc_ouputs = self.enc_self_attn(enc_inputs, enc_inputs, enc_inputs, enc_self_attn_mask) # enc_ouputs: [batch_size, src_len, d_model]
         enc_ouputs = self.pos_ffn(enc_ouputs) # enc_outputs: [batch_size, src_len, d_model]
         return enc_ouputs  # enc_outputs: [batch_size, src_len, d_model]
+
+
+
+
+class ContextualEmbedding(nn.Module):
+    def __init__(self):
+        super(ContextualEmbedding, self).__init__()
+        # 额外的上下文嵌入层
+        self.context_emb = nn.Embedding(context_vocab_size, d_model)
+
+    def forward(self, x, context_info):
+        # 融合上下文信息
+        context_embedding = self.context_emb(context_info)
+        return x + context_embedding
+
+
+
+
+class InstructionTypeEmbedding(nn.Module):
+    def __init__(self):
+        super(InstructionTypeEmbedding, self).__init__()
+        self.type_emb = nn.Embedding(instruction_type_vocab_size, d_model)
+
+    def forward(self, x, instruction_types):
+        type_embedding = self.type_emb(instruction_types)
+        return x + type_embedding
+
+
+
 
 
 class Encoder(nn.Module):
@@ -251,23 +280,25 @@ class Decoder(nn.Module):
         return dec_outputs # dec_outputs: [batch_size, tgt_len, d_model]
 
 
-class Transformer(nn.Module):
+class TransformerForInstructionSequence(nn.Module):
     def __init__(self):
-        super(Transformer, self).__init__()
+        super(TransformerForInstructionSequence, self).__init__()
         self.encoder = Encoder().cuda()
         self.decoder = Decoder().cuda()
-        self.projection = nn.Linear(d_model, tgt_vocab_size).cuda()
+        # 加入定制的编码层
+        self.positional_encoding = CustomPositionalEncoding().cuda()
+        self.contextual_embedding = ContextualEmbedding().cuda()
+        # ... （其他编码层）
 
-    def forward(self, enc_inputs, dec_inputs):
-        '''
-        enc_inputs: [batch_size, src_len]
-        dec_inputs: [batch_size, tgt_len]
-        '''
-        enc_outputs = self.encoder(enc_inputs)
-        dec_outputs = self.decoder(dec_inputs, enc_inputs, enc_outputs)
-        dec_logits = self.projection(dec_outputs) # dec_logits: [batch_size, tgt_len, tgt_vocab_size]
+    def forward(self, enc_inputs, dec_inputs, additional_info):
+        # 从 additional_info 中提取各种编码所需的信息
+        control_flow_info, context_info
+        enc_outputs = self.positional_encoding(self.encoder(enc_inputs), control_flow_info)
+        enc_outputs = self.contextual_embedding(enc_outputs, context_info)
+        # ... （应用其他编码）
+        # Transformer的其他逻辑
+        # ...
 
-        # 解散batch，一个batch中有batch_size个句子，每个句子有tgt_len个词（即tgt_len行），现在让他们按行依次排布，如前tgt_len行是第一个句子的每个词的预测概率，再往下tgt_len行是第二个句子的，一直到batch_size * tgt_len行
-        return dec_logits.view(-1, dec_logits.size(-1))  #  [batch_size * tgt_len, tgt_vocab_size]
-        '''最后变形的原因是：nn.CrossEntropyLoss接收的输入的第二个维度必须是类别'''
+        return dec
+
 
