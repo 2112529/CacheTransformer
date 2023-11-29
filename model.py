@@ -84,12 +84,6 @@ class ScaledDotProductionAttention(nn.Module):
         super(ScaledDotProductionAttention, self).__init__()
 
     def forward(self, Q, K, V, attn_mask):
-        '''
-        Q: [batch_size, n_heads, len_q, d_k]
-        K: [batch_size, n_heads, len_k, d_k]
-        V: [batch_size, n_heads, len_v(=len_k), d_v] 全文两处用到注意力，一处是self attention，另一处是co attention，前者不必说，后者的k和v都是encoder的输出，所以k和v的形状总是相同的
-        attn_mask: [batch_size, n_heads, seq_len, seq_len]
-        '''
         # 1) 计算注意力分数QK^T/sqrt(d_k)
         scores = torch.matmul(Q, K.transpose(-1, -2)) / np.sqrt(d_k)  # scores: [batch_size, n_heads, len_q, len_k]
         # 2)  进行 mask 和 softmax
@@ -98,13 +92,6 @@ class ScaledDotProductionAttention(nn.Module):
         attn = nn.Softmax(dim=-1)(scores)  # attn: [batch_size, n_heads, len_q, len_k]
         # 3) 乘V得到最终的加权和
         context = torch.matmul(attn, V)  # context: [batch_size, n_heads, len_q, d_v]
-        '''
-        得出的context是每个维度(d_1-d_v)都考虑了在当前维度(这一列)当前token对所有token的注意力后更新的新的值，
-        换言之每个维度d是相互独立的，每个维度考虑自己的所有token的注意力，所以可以理解成1列扩展到多列
-
-        返回的context: [batch_size, n_heads, len_q, d_v]本质上还是batch_size个句子，
-        只不过每个句子中词向量维度512被分成了8个部分，分别由8个头各自看一部分，每个头算的是整个句子(一列)的512/8=64个维度，最后按列拼接起来
-        '''
         return context # context: [batch_size, n_heads, len_q, d_v]
 
 
@@ -118,12 +105,7 @@ class MultiHeadAttention(nn.Module):
         self.concat = nn.Linear(d_model, d_model)
 
     def forward(self, input_Q, input_K, input_V, attn_mask):
-        '''
-        input_Q: [batch_size, len_q, d_model] len_q是作为query的句子的长度，比如enc_inputs（2,5,512）作为输入，那句子长度5就是len_q
-        input_K: [batch_size, len_k, d_model]
-        input_K: [batch_size, len_v(len_k), d_model]
-        attn_mask: [batch_size, seq_len, seq_len]
-        '''
+
         residual, batch_size = input_Q, input_Q.size(0)
 
         # 1）linear projection [batch_size, seq_len, d_model] ->  [batch_size, n_heads, seq_len, d_k/d_v]
@@ -234,12 +216,7 @@ class DecoderLayer(nn.Module):
         self.pos_ffn = PositionwiseFeedForward()
 
     def forward(self, dec_inputs, enc_outputs, dec_self_attn_mask, dec_enc_attn_mask):
-        '''
-        dec_inputs: [batch_size, tgt_len, d_model]
-        enc_outputs: [batch_size, src_len, d_model]
-        dec_self_attn_mask: [batch_size, tgt_len, tgt_len]
-        dec_enc_attn_mask: [batch_size, tgt_len, src_len] 前者是Q后者是K
-        '''
+
         dec_outputs = self.dec_self_attn(dec_inputs, dec_inputs, dec_inputs, dec_self_attn_mask)
         dec_outputs = self.dec_enc_attn(dec_outputs, enc_outputs, enc_outputs, dec_enc_attn_mask)
         dec_outputs = self.pos_ffn(dec_outputs)
@@ -258,12 +235,7 @@ class Decoder(nn.Module):
 
 
     def forward(self, dec_inputs, enc_inputs, enc_outputs):
-        '''
-        这三个参数对应的不是Q、K、V，dec_inputs是Q，enc_outputs是K和V，enc_inputs是用来计算padding mask的
-        dec_inputs: [batch_size, tgt_len]
-        enc_inpus: [batch_size, src_len]
-        enc_outputs: [batch_size, src_len, d_model]
-        '''
+
         dec_outputs = self.tgt_emb(dec_inputs)
         dec_outputs = self.pos_emb(dec_outputs).cuda()
         dec_self_attn_pad_mask = get_attn_pad_mask(dec_inputs, dec_inputs).cuda()
