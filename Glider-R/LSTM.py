@@ -3,21 +3,39 @@ from tensorflow.keras import layers
 
 import numpy as np
 
+
+def generate_opt_labels(memory_access_trace):
+    """
+    Generate labels for memory access trace using the OPT (Belady's) algorithm.
+    Label 1 indicates 'cache-friendly' and 0 indicates 'cache-averse'.
+    """
+    labels = [0] * len(memory_access_trace)
+    access_indices = {val: [] for val in set(memory_access_trace)}
+
+    # Create a list of indices for each memory access
+    for idx, access in enumerate(memory_access_trace):
+        access_indices[access].append(idx)
+
+    # Iterate through the memory access trace
+    for idx, access in enumerate(memory_access_trace):
+        future_accesses = access_indices[access]
+
+        # Remove the current access from future_accesses
+        future_accesses.pop(0)
+
+        # If the current access will be accessed again in the future, label it as 'cache-friendly'
+        if future_accesses:
+            labels[idx] = 1
+
+    return labels
+
 def preprocess_data(memory_access_trace, sequence_length):
     # Split the trace into fixed-length overlapping sequences
     sequences = []
-    for i in range(0, len(memory_access_trace) - sequence_length, sequence_length // 2):
+    half_sequence = sequence_length // 2
+    for i in range(0, len(memory_access_trace) - sequence_length + 1, half_sequence):
         sequences.append(memory_access_trace[i:i + sequence_length])
     return np.array(sequences)
-
-# Example usage
-sequence_length = 30  # As mentioned in the paper
-memory_access_trace_path = "data/aster_163B.trace.xz"  # Your memory access trace data
-f=open(memory_access_trace_path, 'rb')
-memory_access_trace = np.load(f)
-processed_data = preprocess_data(memory_access_trace, sequence_length)
-
-
 
 # Define the LSTM model with attention
 class CacheReplacementModel(tf.keras.Model):
@@ -34,30 +52,41 @@ class CacheReplacementModel(tf.keras.Model):
         attention_out = self.attention([lstm_out, lstm_out])
         return self.output_layer(attention_out)
 
-# Example usage
-pc_vocab_size = 1000  # Replace with the actual size
-embedding_dim = 128
-lstm_units = 256
+
+
+sequence_length = 2 * 10  # Update 'N' with the specific value from the paper
+
+import os
+print(os.getcwd())
+
+memory_access_trace_path = "Glider-R/data/aster_163B.trace.xz"  # Your memory access trace data
+f=open(memory_access_trace_path, 'rb')
+memory_access_trace = np.load(f)
+
+
+processed_data = preprocess_data(memory_access_trace, sequence_length)
+pc_vocab_size = 1000  # Replace with the actual size from the paper
+embedding_dim = 128  # Update if specified in the paper
+lstm_units = 256     # Update if specified in the paper
 
 model = CacheReplacementModel(pc_vocab_size, embedding_dim, lstm_units)
 
-# Compile the model
 # Compile the model
 model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
 
 # Assuming you have processed_data and labels
 train_data = processed_data
-train_labels = [...]  # Binary labels for cache-friendly or cache-averse
+
+train_labels = generate_opt_labels(memory_access_trace)
 
 # Train the model
 epochs = 10  # Number of epochs
 batch_size = 32  # Batch size
 model.fit(train_data, train_labels, epochs=epochs, batch_size=batch_size)
 
-# Assuming you have test_data and test_labels
-test_data = [...]  # Test dataset
-test_labels = [...]  # Test labels
+# # Assuming you have test_data and test_labels
+# test_data = [...]  # Test dataset
+# test_labels = [...]  # Test labels
 
-# Evaluate the model
-model.evaluate(test_data, test_labels)
-
+# # Evaluate the model
+# model.evaluate(test_data, test_labels)
